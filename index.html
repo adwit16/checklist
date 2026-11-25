@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Routines">
+<meta name="theme-color" content="#111111">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Routines</title>
+<style>
+:root{--bg:#111;--card:#1c1c1e;--text:#f2f2f7;--dim:#8e8e93;--accent:#30d158;--line:#2c2c2e}
+@media(prefers-color-scheme:light){:root{--bg:#f2f2f7;--card:#fff;--text:#000;--dim:#6c6c70;--line:#e5e5ea}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--text);font:16px -apple-system,system-ui,sans-serif;
+padding:env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 24px)}
+.tabs{display:flex;gap:8px;overflow-x:auto;padding:16px 0 8px}
+.tab{flex:none;padding:8px 14px;border-radius:20px;background:var(--card);color:var(--dim);border:0;font:inherit}
+.tab.on{background:var(--accent);color:#000;font-weight:600}
+h1{margin:12px 0 4px;font-size:28px}
+.meta{color:var(--dim);margin-bottom:12px}
+.count{font-size:20px;font-weight:600;margin-bottom:12px}
+.count.late{color:#ff453a}
+.bar{height:6px;background:var(--line);border-radius:3px;margin-bottom:16px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .2s}
+.item{display:flex;align-items:center;gap:12px;background:var(--card);padding:14px;border-radius:12px;margin-bottom:8px;width:100%;border:0;color:var(--text);font:inherit;text-align:left}
+.box{width:24px;height:24px;border-radius:50%;border:2px solid var(--dim);flex:none;display:grid;place-items:center}
+.item.done .box{background:var(--accent);border-color:var(--accent)}
+.item.done .box::after{content:"✓";color:#000;font-size:14px;font-weight:700}
+.item.done span{color:var(--dim);text-decoration:line-through}
+.link{background:none;border:0;color:var(--accent);font:inherit;padding:12px 0}
+label{display:block;color:var(--dim);font-size:13px;margin:12px 0 4px}
+input,textarea{width:100%;background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:10px;font:inherit}
+textarea{min-height:140px}
+.row{display:flex;gap:10px}.row>div{flex:1}
+</style>
+</head>
+<body>
+<div class="tabs" id="tabs"></div>
+<div id="main"></div>
+<script>
+const DEFAULTS=[
+ {id:"morning",name:"Morning",start:"06:30",deadline:"08:30",dlLabel:"Leave for office",
+  steps:["Drink water","Brush & shower","Get dressed","Pack laptop & charger","Breakfast","Keys, wallet, phone"]},
+ {id:"pregym",name:"Pre-Gym",start:"17:30",deadline:"18:30",dlLabel:"Leave for gym",
+  steps:["Change into gym clothes","Pre-workout snack","Fill water bottle","Pack gym bag","Earphones charged"]},
+ {id:"postgym",name:"Post-Gym",start:"20:00",deadline:"22:30",dlLabel:"Be in bed",
+  steps:["Shower","Dinner","Prep tomorrow's bag & clothes","Charge devices","Phone away, lights out"]}
+];
+const $=s=>document.querySelector(s);
+const today=()=>{const d=new Date();return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate()};
+const mins=t=>{const[h,m]=t.split(":").map(Number);return h*60+m};
+const nowMin=()=>{const d=new Date();return d.getHours()*60+d.getMinutes()};
+const load=(k,f)=>{try{return JSON.parse(localStorage.getItem(k))||f}catch{return f}};
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+
+let routines=load("routines",DEFAULTS);
+let done=load("done",{});            // {date:{routineId:[idx,...]}}
+let current=null, editing=false;
+
+function autoPick(){
+  const n=nowMin();
+  const sorted=[...routines].sort((a,b)=>mins(a.start)-mins(b.start));
+  let pick=sorted[sorted.length-1];           // before first start => last routine (wrap)
+  for(const r of sorted) if(mins(r.start)<=n) pick=r;
+  return pick.id;
+}
+function doneSet(id){return new Set((done[today()]||{})[id]||[])}
+function toggle(id,i){
+  const day=done[today()]={...(done[today()]||{})};   // keep only today
+  done={[today()]:day};
+  const s=new Set(day[id]||[]); s.has(i)?s.delete(i):s.add(i);
+  day[id]=[...s]; save("done",done); render();
+}
+function render(){
+  if(!current||!routines.find(r=>r.id===current)) current=autoPick();
+  $("#tabs").innerHTML=routines.map(r=>`<button class="tab ${r.id===current?"on":""}" data-id="${r.id}">${r.name}</button>`).join("");
+  document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{current=b.dataset.id;editing=false;render()});
+  editing?renderEdit():renderView();
+}
+function renderView(){
+  const r=routines.find(x=>x.id===current), ds=doneSet(r.id);
+  const pct=r.steps.length?Math.round(ds.size/r.steps.length*100):0;
+  $("#main").innerHTML=`
+   <h1>${r.name}</h1>
+   <div class="meta">${r.start} start · ${r.dlLabel} at ${r.deadline}</div>
+   <div class="count" id="cd"></div>
+   <div class="bar"><i style="width:${pct}%"></i></div>
+   ${r.steps.map((s,i)=>`<button class="item ${ds.has(i)?"done":""}" data-i="${i}"><div class="box"></div><span>${s}</span></button>`).join("")}
+   <button class="link" id="edit">Edit routines</button>`;
+  document.querySelectorAll(".item").forEach(b=>b.onclick=()=>toggle(r.id,+b.dataset.i));
+  $("#edit").onclick=()=>{editing=true;render()};
+  tick();
+}
+function tick(){
+  const r=routines.find(x=>x.id===current), el=$("#cd"); if(!el||!r) return;
+  const left=mins(r.deadline)-nowMin();
+  if(left>=0){const h=Math.floor(left/60),m=left%60;el.className="count";el.textContent=`${h?h+"h ":""}${m}m until ${r.dlLabel.toLowerCase()}`}
+  else{el.className="count late";el.textContent=`${-left}m past ${r.dlLabel.toLowerCase()} time`}
+}
+function renderEdit(){
+  const r=routines.find(x=>x.id===current);
+  $("#main").innerHTML=`
+   <h1>Edit</h1>
+   <label>Name</label><input id="n" value="${r.name}">
+   <div class="row"><div><label>Starts at</label><input id="s" type="time" value="${r.start}"></div>
+   <div><label>Deadline</label><input id="d" type="time" value="${r.deadline}"></div></div>
+   <label>Deadline label</label><input id="l" value="${r.dlLabel}">
+   <label>Steps (one per line)</label><textarea id="t">${r.steps.join("\n")}</textarea>
+   <button class="item" id="save" style="justify-content:center;margin-top:16px">Save</button>
+   <button class="link" id="add">+ New routine</button>
+   <button class="link" id="del" style="color:#ff453a">Delete this routine</button>
+   <button class="link" id="back">Cancel</button>`;
+  $("#save").onclick=()=>{r.name=$("#n").value.trim()||r.name;r.start=$("#s").value||r.start;r.deadline=$("#d").value||r.deadline;
+    r.dlLabel=$("#l").value.trim()||r.dlLabel;r.steps=$("#t").value.split("\n").map(x=>x.trim()).filter(Boolean);
+    save("routines",routines);editing=false;render()};
+  $("#add").onclick=()=>{const id="r"+Date.now();routines.push({id,name:"New",start:"12:00",deadline:"13:00",dlLabel:"Deadline",steps:["First step"]});
+    save("routines",routines);current=id;render()};
+  $("#del").onclick=()=>{if(routines.length>1&&confirm("Delete?")){routines=routines.filter(x=>x.id!==r.id);save("routines",routines);current=null;editing=false;render()}};
+  $("#back").onclick=()=>{editing=false;render()};
+}
+setInterval(tick,30000);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden&&!editing){current=autoPick();render()}});
+render();
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>
